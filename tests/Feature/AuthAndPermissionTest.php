@@ -26,17 +26,17 @@ class AuthAndPermissionTest extends TestCase
         ], $attributes));
     }
 
-    public function test_guest_is_redirected_to_login(): void
+    public function test_guest_gets_401_from_protected_api(): void
     {
-        $this->get('/dashboard')->assertRedirect(route('login'));
+        $this->getJson('/api/user')->assertUnauthorized();
     }
 
     public function test_active_user_can_log_in(): void
     {
         $user = $this->userWithRole('cashier');
 
-        $this->post('/login', ['email' => $user->email, 'password' => 'password'])
-            ->assertRedirect(route('dashboard'));
+        $this->postJson('/login', ['email' => $user->email, 'password' => 'password'])
+            ->assertOk();
 
         $this->assertAuthenticatedAs($user);
     }
@@ -45,8 +45,9 @@ class AuthAndPermissionTest extends TestCase
     {
         $user = $this->userWithRole('cashier');
 
-        $this->post('/login', ['email' => $user->email, 'password' => 'wrong'])
-            ->assertSessionHasErrors('email');
+        $this->postJson('/login', ['email' => $user->email, 'password' => 'wrong'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('email');
 
         $this->assertGuest();
     }
@@ -55,25 +56,42 @@ class AuthAndPermissionTest extends TestCase
     {
         $user = $this->userWithRole('cashier', ['is_active' => false]);
 
-        $this->post('/login', ['email' => $user->email, 'password' => 'password'])
-            ->assertSessionHasErrors('email');
+        $this->postJson('/login', ['email' => $user->email, 'password' => 'password'])
+            ->assertUnprocessable();
 
         $this->assertGuest();
     }
 
-    public function test_admin_can_open_user_management(): void
+    public function test_api_user_returns_role_and_permissions(): void
     {
-        $this->actingAs($this->userWithRole('admin'))
-            ->get('/admin/users')->assertOk();
+        $this->actingAs($this->userWithRole('waiter'))
+            ->getJson('/api/user')
+            ->assertOk()
+            ->assertJsonPath('role.name', 'waiter')
+            ->assertJsonFragment(['orders.create'])
+            ->assertJsonMissing(['refunds.process']);
     }
 
-    public function test_chef_and_manager_cannot_open_user_management(): void
+    public function test_inactive_user_with_session_is_blocked_from_api(): void
+    {
+        $this->actingAs($this->userWithRole('cashier', ['is_active' => false]))
+            ->getJson('/api/user')
+            ->assertForbidden();
+    }
+
+    public function test_admin_can_open_user_management_endpoint(): void
+    {
+        $this->actingAs($this->userWithRole('admin'))
+            ->getJson('/api/admin/users')->assertOk();
+    }
+
+    public function test_chef_and_manager_cannot_open_user_management_endpoint(): void
     {
         $this->actingAs($this->userWithRole('chef'))
-            ->get('/admin/users')->assertForbidden();
+            ->getJson('/api/admin/users')->assertForbidden();
 
         $this->actingAs($this->userWithRole('manager'))
-            ->get('/admin/users')->assertForbidden();
+            ->getJson('/api/admin/users')->assertForbidden();
     }
 
     public function test_role_permissions_match_the_design(): void
